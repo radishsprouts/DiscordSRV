@@ -558,7 +558,7 @@ public class JdbcAccountLinkManager extends AbstractAccountLinkManager {
     }
 
     @Override
-    public void link(String discordId, UUID uuid) {
+    public synchronized void link(String discordId, UUID uuid) {
         if (discordId.trim().isEmpty()) {
             throw new IllegalArgumentException("Empty discord id's are not allowed");
         }
@@ -568,6 +568,14 @@ public class JdbcAccountLinkManager extends AbstractAccountLinkManager {
         // make sure the user isn't linked
         unlink(discordId);
         unlink(uuid);
+
+        try (final PreparedStatement deleteStatement = connection.prepareStatement("delete from " + accountsTable + " where `discord` = ? or `uuid` = ?")) {
+            deleteStatement.setString(1, discordId);
+            deleteStatement.setString(2, uuid.toString());
+            deleteStatement.executeUpdate();
+        } catch (SQLException e) {
+            DiscordSRV.error(e);
+        }
 
         try (final PreparedStatement statement = connection.prepareStatement("insert into " + accountsTable + " (discord, uuid) VALUES (?, ?)")) {
             statement.setString(1, discordId);
@@ -583,12 +591,12 @@ public class JdbcAccountLinkManager extends AbstractAccountLinkManager {
     }
 
     @Override
-    public void unlink(UUID uuid) {
+    public synchronized void unlink(UUID uuid) {
         ensureOffThread(false);
         String discord = getDiscordId(uuid);
-        if (discord == null) return;
-
-        beforeUnlink(uuid, discord);
+        if (discord != null) {
+            beforeUnlink(uuid, discord);
+        }
         try (final PreparedStatement statement = connection.prepareStatement("delete from " + accountsTable + " where `uuid` = ?")) {
             statement.setString(1, uuid.toString());
             statement.executeUpdate();
@@ -596,16 +604,18 @@ public class JdbcAccountLinkManager extends AbstractAccountLinkManager {
             DiscordSRV.error(e);
         }
         cache.remove(uuid);
-        afterUnlink(uuid, discord);
+        if (discord != null) {
+            afterUnlink(uuid, discord);
+        }
     }
 
     @Override
-    public void unlink(String discordId) {
+    public synchronized void unlink(String discordId) {
         ensureOffThread(false);
         UUID uuid = getUuid(discordId);
-        if (uuid == null) return;
-
-        beforeUnlink(uuid, discordId);
+        if (uuid != null) {
+            beforeUnlink(uuid, discordId);
+        }
         try (final PreparedStatement statement = connection.prepareStatement("delete from " + accountsTable + " where `discord` = ?")) {
             statement.setString(1, discordId);
             statement.executeUpdate();
@@ -613,7 +623,9 @@ public class JdbcAccountLinkManager extends AbstractAccountLinkManager {
             DiscordSRV.error(e);
         }
         cache.removeValue(discordId);
-        afterUnlink(uuid, discordId);
+        if (uuid != null) {
+            afterUnlink(uuid, discordId);
+        }
     }
 
     @Override
